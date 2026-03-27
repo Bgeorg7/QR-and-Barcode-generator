@@ -16,7 +16,7 @@ with st.sidebar:
     if categoria_control == "Ingreso al ENEUN":
         evento_actual = st.selectbox("Punto de Ingreso:", ["Llegada", "Salida"])
     elif categoria_control == "Asistencia a Lugares":
-        evento_actual = st.selectbox("Lugar:", ["Banos", "Auditorio Principal", "Zona Camping", "Zona de Alimentacion"])
+        evento_actual = st.selectbox("Lugar:", ["Baños", "Auditorio Principal", "Zona Camping", "Zona de Alimentacion"])
 
     st.divider()
     if st.button("Forzar Actualizacion Manual"):
