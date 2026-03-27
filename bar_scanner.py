@@ -5,6 +5,13 @@ from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="Control ENEUN", layout="wide")
 
+# --- MAGIA NUEVA: Definimos todos los lugares posibles de una vez ---
+EVENTOS_POSIBLES = [
+    "Llegada", "Salida", "Baños", "Banos", 
+    "Auditorio Principal", "Zona Camping", "Zona de Alimentacion"
+]
+# -------------------------------------------------------------------
+
 with st.sidebar:
     st.header("Configuracion de Control")
     
@@ -16,6 +23,7 @@ with st.sidebar:
     if categoria_control == "Ingreso al ENEUN":
         evento_actual = st.selectbox("Punto de Ingreso:", ["Llegada", "Salida"])
     elif categoria_control == "Asistencia a Lugares":
+        # Nota: Escribi "Baños" con la ñ para que se vea bien en pantalla
         evento_actual = st.selectbox("Lugar:", ["Baños", "Auditorio Principal", "Zona Camping", "Zona de Alimentacion"])
 
     st.divider()
@@ -51,13 +59,17 @@ def obtener_datos_frescos():
     else:
         df['doc_limpio'] = ""
 
-    if col_estado not in df.columns:
-        df[col_estado] = 'No'
-    if col_hora not in df.columns:
-        df[col_hora] = ''
+    # MAGIA NUEVA: Obligamos a crear TODAS las columnas de todos los eventos al mismo tiempo
+    for ev in EVENTOS_POSIBLES:
+        c_est = f"{ev}_Estado"
+        c_hor = f"{ev}_Hora"
+        if c_est not in df.columns:
+            df[c_est] = 'No'
+        if c_hor not in df.columns:
+            df[c_hor] = ''
+        df[c_est] = df[c_est].fillna('No')
+        df[c_hor] = df[c_hor].fillna('')
         
-    df[col_estado] = df[col_estado].fillna('No')
-    df[col_hora] = df[col_hora].fillna('')
     return df
 
 # Carga inicial para mostrar metricas al abrir la app
@@ -67,6 +79,15 @@ if 'df' not in st.session_state:
     except Exception as e:
         st.error(f"Error inicial: {e}")
         st.stop()
+else:
+    # Escudo protector por si ya tenias la app abierta
+    for ev in EVENTOS_POSIBLES:
+        c_est = f"{ev}_Estado"
+        c_hor = f"{ev}_Hora"
+        if c_est not in st.session_state.df.columns:
+            st.session_state.df[c_est] = 'No'
+        if c_hor not in st.session_state.df.columns:
+            st.session_state.df[c_hor] = ''
 
 st.title(categoria_control)
 st.write(f"Operando control de: **{evento_actual}**")
@@ -87,12 +108,10 @@ with col_izq:
             # Limpieza basica (solo espacios y minusculas)
             input_base = codigo_escaneado.strip().lower().replace(" ", "")
             
-            # LOGICA CORREGIDA: Detectar si es correo o documento
+            # Detectar si es correo o documento
             if "@" in input_base:
-                # Si tiene arroba, es correo. Buscamos directo en email_limpio
                 filtro = (df_fresco['email_limpio'] == input_base)
             else:
-                # Si no tiene arroba, asumimos que es documento. Le quitamos los puntos y comas.
                 input_doc = input_base.replace(".", "").replace(",", "")
                 filtro = (df_fresco['doc_limpio'] == input_doc)
 
@@ -148,7 +167,7 @@ with col_izq:
         except Exception as e:
             st.error(f"Error al procesar el registro: {e}")
 
-# Metricas usando la memoria local (se actualiza sola tras un escaneo)
+# Metricas usando la memoria local
 df_local = st.session_state.df
 total_registrados = len(df_local)
 total_asistentes = len(df_local[df_local[col_estado] == 'Sí'])
