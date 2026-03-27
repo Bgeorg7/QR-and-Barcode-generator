@@ -19,7 +19,7 @@ with st.sidebar:
     if categoria_control == "Ingreso al ENEUN":
         evento_actual = st.selectbox("Punto de Ingreso:", ["Llegada", "Salida"])
     elif categoria_control == "Asistencia a Lugares":
-        evento_actual = st.selectbox("Lugar:", ["Baños", "Auditorio Principal", "Zona Camping", "Zona de Alimentacion"])
+        evento_actual = st.selectbox("Lugar:", ["Banos", "Auditorio Principal", "Zona Camping", "Zona de Alimentacion"])
 
     st.divider()
     if st.button("Reiniciar Historial de Sesion"):
@@ -35,6 +35,11 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 URL_HOJA = "https://docs.google.com/spreadsheets/d/1ZiONmxy82-cDPqlqgCsK4qPtuEUL76UnjRFzEWyHg5Q/edit"
 NOMBRE_PESTANA = "attendees" # Cambia esto si la pestana en tu Excel se llama diferente
 
+# --- ¡ATENCION AQUI! ---
+# Escribe aqui el nombre EXACTO de la columna donde estan los documentos en tu Google Sheet:
+NOMBRE_COLUMNA_DOCUMENTO = "documento" 
+# ------------------------
+
 if 'df' not in st.session_state:
     try:
         # 2. Leer los datos desde la nube (ttl=0 obliga a no usar memoria cache del error)
@@ -47,6 +52,7 @@ if 'df' not in st.session_state:
         )
         df_inicial.columns = df_inicial.columns.str.strip()
         
+        # Limpiar columna de Correo
         if 'email' in df_inicial.columns:
             df_inicial['email_limpio'] = df_inicial['email'].astype(str).str.strip().str.lower().str.replace(" ", "")
         elif 'email_x' in df_inicial.columns:
@@ -54,6 +60,13 @@ if 'df' not in st.session_state:
         else:
             st.error("No se encontro una columna de correo electronico valida en la base de datos.")
             st.stop()
+            
+        # Limpiar columna de Documento (quita puntos, comas y espacios)
+        if NOMBRE_COLUMNA_DOCUMENTO in df_inicial.columns:
+            df_inicial['doc_limpio'] = df_inicial[NOMBRE_COLUMNA_DOCUMENTO].astype(str).str.strip().str.lower().str.replace(" ", "").str.replace(".", "").str.replace(",", "")
+        else:
+            df_inicial['doc_limpio'] = "" # Si no encuentra la columna, la deja vacia para que no de error
+            st.warning(f"No se encontro la columna '{NOMBRE_COLUMNA_DOCUMENTO}'. Solo se buscara por correo.")
             
         st.session_state.df = df_inicial
     except Exception as e:
@@ -79,12 +92,16 @@ col_izq, col_der = st.columns([2, 1])
 with col_izq:
     st.subheader("Registro")
     with st.form(key='formulario_escaneo', clear_on_submit=True):
-        codigo_escaneado = st.text_input("Correo Electronico de Escarapela:")
+        # Texto actualizado para que la gente sepa que puede usar ambas cosas
+        codigo_escaneado = st.text_input("Correo Electrónico o Documento de Identidad:")
         boton_registrar = st.form_submit_button(label='Registrar Entrada')
 
     if boton_registrar and codigo_escaneado:
-        correo_limpio = codigo_escaneado.strip().lower().replace(" ", "")
-        filtro = df_local['email_limpio'] == correo_limpio
+        # Limpiamos lo que la persona escribio en la caja de texto
+        input_limpio = codigo_escaneado.strip().lower().replace(" ", "").replace(".", "").replace(",", "")
+        
+        # MAGIA AQUI: Busca en la columna email_limpio O (|) en la columna doc_limpio
+        filtro = (df_local['email_limpio'] == input_limpio) | (df_local['doc_limpio'] == input_limpio)
 
         if filtro.any():
             indice = df_local.index[filtro].tolist()[0]
@@ -112,7 +129,8 @@ with col_izq:
                 
                 # 3. Guardar el cambio directamente en Google Sheets
                 try:
-                    df_a_guardar = st.session_state.df.drop(columns=['email_limpio'], errors='ignore')
+                    # Nos aseguramos de NO subir las columnas sucias a Google Sheets
+                    df_a_guardar = st.session_state.df.drop(columns=['email_limpio', 'doc_limpio'], errors='ignore')
                     conn.update(
                         spreadsheet=URL_HOJA, 
                         worksheet=NOMBRE_PESTANA, 
@@ -132,7 +150,7 @@ with col_izq:
                     st.markdown(f"**Registro:** {hora_actual}")
                 
         else:
-            st.error("DENEGADO: Correo no encontrado en la base de datos.")
+            st.error("DENEGADO: Correo o Documento no encontrado en la base de datos.")
 
 total_registrados = len(df_local)
 total_asistentes = len(df_local[df_local[col_estado] == 'Sí'])
