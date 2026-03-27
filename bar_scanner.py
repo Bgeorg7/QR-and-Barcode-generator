@@ -1,44 +1,50 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="Control ENEUN", layout="wide")
 
 with st.sidebar:
-    st.header("Configuración de Control")
+    st.header("Configuracion de Control")
     
     categoria_control = st.selectbox(
         "Tipo de Control:",
         [
-            "Ingreso al ENEUN (Check-in)", 
-            "Buses", 
-            "Alimentación Principal", 
-            "Refrigerios", 
+            "Ingreso al ENEUN", 
             "Asistencia a Lugares"
         ]
     )
     
-    if categoria_control == "Ingreso al ENEUN (Check-in)":
-        evento_actual = st.selectbox("Punto de Ingreso:", ["Llegada Manizales (Validar Requisitos)"])
-    elif categoria_control == "Buses":
-        evento_actual = st.selectbox("Ruta:", ["Ida: Bogotá -> Manizales", "Regreso: Manizales -> Bogotá"])
-    elif categoria_control == "Alimentación Principal":
-        evento_actual = st.selectbox("Comida:", ["Almuerzo Viernes", "Cena Viernes", "Almuerzo Sábado", "Cena Sábado", "Almuerzo Domingo"])
-    elif categoria_control == "Refrigerios":
-        evento_actual = st.selectbox("Refrigerio:", ["Refrigerio Viernes AM", "Refrigerio Viernes PM", "Refrigerio Sábado AM", "Refrigerio Sábado PM"])
+    if categoria_control == "Ingreso al ENEUN":
+        evento_actual = st.selectbox("Punto de Ingreso:", ["Llegada", "Salida"])
     elif categoria_control == "Asistencia a Lugares":
-        evento_actual = st.selectbox("Lugar:", ["Baños", "Auditorio Principal", "Zona Camping", "Zona de Alimentación"])
+        evento_actual = st.selectbox("Lugar:", ["Baños", "Auditorio Principal", "Zona Camping", "Zona de Alimentacion"])
 
     st.divider()
-    if st.button("Reiniciar Historial de Sesión"):
+    if st.button("Reiniciar Historial de Sesion"):
         if 'df' in st.session_state:
             del st.session_state['df']
-        st.success("Base de datos reiniciada a cero.")
+        st.success("Base de datos local reiniciada. (No borra Google Sheets)")
         st.rerun()
+
+# 1. Crear la conexion a Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Enlace ultra limpio, cortado exactamente despues de /edit
+URL_HOJA = "https://docs.google.com/spreadsheets/d/1ZiONmxy82-cDPqlqgCsK4qPtuEUL76UnjRFzEWyHg5Q/edit"
+NOMBRE_PESTANA = "attendees" # Cambia esto si la pestana en tu Excel se llama diferente
 
 if 'df' not in st.session_state:
     try:
-        df_inicial = pd.read_excel('base_completa.xlsx', sheet_name='attendees')
+        # 2. Leer los datos desde la nube (ttl=0 obliga a no usar memoria cache del error)
+        df_inicial = conn.read(
+            spreadsheet=URL_HOJA,
+            worksheet=NOMBRE_PESTANA,
+            usecols=list(range(25)), # Lee las primeras 25 columnas (A hasta Y)
+            nrows=466,
+            ttl=0 
+        )
         df_inicial.columns = df_inicial.columns.str.strip()
         
         if 'email' in df_inicial.columns:
@@ -51,12 +57,13 @@ if 'df' not in st.session_state:
             
         st.session_state.df = df_inicial
     except Exception as e:
-        st.error(f"Error cargando base de datos: {e}")
+        st.error(f"Error conectando con Google Sheets: {e}. Verifica tus credenciales y el enlace.")
         st.stop()
 
 col_estado = f"{evento_actual}_Estado"
 col_hora = f"{evento_actual}_Hora"
 
+# Crear columnas si no existen en el DataFrame traido de Sheets
 if col_estado not in st.session_state.df.columns:
     st.session_state.df[col_estado] = 'No'
 if col_hora not in st.session_state.df.columns:
@@ -70,7 +77,7 @@ st.write(f"Operando control de: **{evento_actual}**")
 col_izq, col_der = st.columns([2, 1])
 
 with col_izq:
-    st.subheader("Escaner / Entrada Manual")
+    st.subheader("Registro")
     with st.form(key='formulario_escaneo', clear_on_submit=True):
         codigo_escaneado = st.text_input("Correo Electronico de Escarapela:")
         boton_registrar = st.form_submit_button(label='Registrar Entrada')
@@ -90,39 +97,38 @@ with col_izq:
                 nombre_comp = "Sin Nombre"
                 
             sede_user = df_local.at[indice, 'sede'] if 'sede' in df_local.columns else "Sin Sede"
-            alimentacion = df_local.at[indice, 'Tipo_Alimentacion'] if 'Tipo_Alimentacion' in df_local.columns else "No especificado"
-            talleres_completos = df_local.at[indice, 'Talleres_Obligatorios'] if 'Talleres_Obligatorios' in df_local.columns else "No especificado"
-
             estado_actual = df_local.at[indice, col_estado]
-            
-            if evento_actual in ["Ida: Bogotá -> Manizales", "Llegada Manizales (Validar Requisitos)"] and talleres_completos == 'No':
-                st.error(f"DENEGADO: A {nombre_comp} le faltan talleres obligatorios.")
-            
-            elif categoria_control in ["Alimentación Principal", "Refrigerios"] and estado_actual == 'Sí':
-                st.warning(f"YA ENTREGADO: {nombre_comp} ya reclamo esto a las {df_local.at[indice, col_hora]}.\n\nDieta: **{alimentacion}**")
-            
-            elif categoria_control in ["Ingreso al ENEUN (Check-in)", "Buses"] and estado_actual == 'Sí':
+                        
+            if categoria_control == "Ingreso al ENEUN" and estado_actual == 'Sí':
                 st.warning(f"REPETIDO: {nombre_comp} ya fue registrado en {evento_actual} a las {df_local.at[indice, col_hora]}.")
 
             else:
                 hora_actual = datetime.now().strftime("%H:%M:%S")
                 es_reingreso = (categoria_control == "Asistencia a Lugares" and estado_actual == 'Sí')
                 
+                # Actualizar memoria local
                 st.session_state.df.at[indice, col_estado] = 'Sí'
                 st.session_state.df.at[indice, col_hora] = hora_actual
                 
-                if es_reingreso:
-                    st.success("REINGRESO APROBADO")
-                else:
-                    st.success("ACCESO APROBADO")
+                # 3. Guardar el cambio directamente en Google Sheets
+                try:
+                    df_a_guardar = st.session_state.df.drop(columns=['email_limpio'], errors='ignore')
+                    conn.update(
+                        spreadsheet=URL_HOJA, 
+                        worksheet=NOMBRE_PESTANA, 
+                        data=df_a_guardar
+                    )
+                    
+                    if es_reingreso:
+                        st.success("REINGRESO APROBADO Y GUARDADO EN LA NUBE")
+                    else:
+                        st.success("ACCESO APROBADO Y GUARDADO EN LA NUBE")
+                except Exception as e:
+                    st.error(f"Acceso aprobado localmente, pero fallo al guardar en Google Sheets: {e}")
                 
                 with st.container(border=True):
                     st.markdown(f"**Participante:** {nombre_comp}")
                     st.markdown(f"**Sede:** {sede_user}")
-                    
-                    if categoria_control in ["Alimentación Principal", "Refrigerios"]:
-                        st.markdown(f"**Entregar Dieta:** {alimentacion}")
-                    
                     st.markdown(f"**Registro:** {hora_actual}")
                 
         else:
@@ -137,15 +143,3 @@ with col_der:
     st.metric("Inscritos Totales", total_registrados)
     st.metric("Registrados hoy", total_asistentes)
     st.progress(float(porcentaje))
-    
-    st.divider()
-    columnas_exportar = [col for col in df_local.columns if col != 'email_limpio']
-    csv_exportable = df_local[columnas_exportar].to_csv(index=False).encode('utf-8')
-    nombre_archivo = f"reporte_{evento_actual.replace(' ', '_').replace(':', '')}.csv"
-    
-    st.download_button(
-        label="Guardar Datos Actuales (CSV)",
-        data=csv_exportable,
-        file_name=nombre_archivo,
-        mime="text/csv"
-    )
